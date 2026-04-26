@@ -21,7 +21,10 @@ import "dotenv/config";
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const CSV_URL = process.env.CSV_URL;
+// CSV URL — hardcoded fallback so we don't depend on env var copy-paste.
+// Override via env var if you need to point to a different sheet.
+const DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQZiV2qtlydfMCH2xyqBlomBxTjjGzu9eqVae65xRfr38q9cZ8h7WKsVxXg8gQuX1kz7M1S_YUSC53H/pub?gid=1396698544&single=true&output=csv";
+const CSV_URL = (process.env.CSV_URL && process.env.CSV_URL.startsWith("https://")) ? process.env.CSV_URL : DEFAULT_CSV_URL;
 const ALLOWED_CHATS = (process.env.ALLOWED_CHATS || "")
   .split(",").map(s => s.trim()).filter(Boolean);
 const TIMEZONE = process.env.TIMEZONE || "Europe/Warsaw";
@@ -31,10 +34,7 @@ if (!BOT_TOKEN) {
   console.error("❌ Missing BOT_TOKEN env var.");
   process.exit(1);
 }
-if (!CSV_URL) {
-  console.error("❌ Missing CSV_URL env var.");
-  process.exit(1);
-}
+console.log(`▶ CSV_URL in use: ${CSV_URL}`);
 
 app.use(express.json());
 
