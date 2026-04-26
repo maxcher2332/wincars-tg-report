@@ -1,0 +1,12 @@
+{
+  "name": "wincars-tg-report",
+  "version": "1.0.0",
+  "description": "Daily sales report from Google Sheet to Telegram",
+  "type": "module",
+  "scripts": {
+    "start": "node send_report.js"
+  },
+  "dependencies": {
+    "csv-parse": "^5.5.6"
+  }
+}
