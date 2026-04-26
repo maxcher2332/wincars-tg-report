@@ -62,11 +62,13 @@ function isTotalRow(name) {
   return n.includes("общий") || n.includes("итог") || n.includes("total") || n.includes("razem");
 }
 
+function isHeaderRow(name) {
+  return /имя|name|менеджер|manager|imię|imie/i.test(name);
+}
+
 function buildMessage(rows) {
-  // Find first row that looks like a header (contains "Имя" or "Name" etc.)
-  let headerIdx = rows.findIndex(r =>
-    r.some(c => /имя|name|менеджер|manager|imię|imie/i.test(c || ""))
-  );
+  // Find the FIRST header row
+  let headerIdx = rows.findIndex(r => r.some(c => isHeaderRow(c || "")));
   if (headerIdx < 0) headerIdx = 1;
   const dataStart = headerIdx + 1;
 
@@ -78,10 +80,14 @@ function buildMessage(rows) {
     if (!row || !row[0] || !row[0].trim()) continue;
     const name = row[0].trim();
 
+    // STOP at the first totals row — anything after is a second block we ignore
     if (isTotalRow(name)) {
       total = parseRow(row);
-      continue;
+      break;
     }
+    // STOP if we hit a SECOND header row mid-sheet
+    if (isHeaderRow(name) && !num(row[2])) break;
+
     if (isDateRow(name)) continue;
     if (!row[1] && !row[2] && !row[3]) continue;   // skip empty data rows
 
