@@ -1,17 +1,16 @@
 /**
- * Wincars Telegram bot — webhook-based server.
+ * Wincars Telegram bot — webhook-based server (multi-office).
  *
- * Listens for /report, /top, /me, /help, /start commands from Telegram users
- * and replies with sales data fetched from a Google Sheet (CSV).
+ * Listens for /report, /top, /me, /wola, /mokotow, /help, /start commands
+ * and replies with sales data from multiple Google Sheets.
  *
  * Required env vars (Render → Environment):
  *   BOT_TOKEN      — Telegram bot token from @BotFather
- *   CSV_URL        — public Google Sheet CSV link
  *   ALLOWED_CHATS  — comma-separated list of allowed chat ids (e.g. "385330400")
  * Optional:
  *   TIMEZONE       — IANA tz, default "Europe/Warsaw"
  *   WEBHOOK_SECRET — extra guard for /setup-webhook (default "wincars-setup")
- *   PORT           — set automatically by Render
+ *   WOLA_CSV_URL, MOKOTOW_CSV_URL — override hardcoded URLs if needed
  */
 
 import express from "express";
@@ -21,10 +20,6 @@ import "dotenv/config";
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
-// CSV URL — hardcoded fallback so we don't depend on env var copy-paste.
-// Override via env var if you need to point to a different sheet.
-const DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQZiV2qtlydfMCH2xyqBlomBxTjjGzu9eqVae65xRfr38q9cZ8h7WKsVxXg8gQuX1kz7M1S_YUSC53H/pub?gid=1396698544&single=true&output=csv";
-const CSV_URL = (process.env.CSV_URL && process.env.CSV_URL.startsWith("https://")) ? process.env.CSV_URL : DEFAULT_CSV_URL;
 const ALLOWED_CHATS = (process.env.ALLOWED_CHATS || "")
   .split(",").map(s => s.trim()).filter(Boolean);
 const TIMEZONE = process.env.TIMEZONE || "Europe/Warsaw";
@@ -34,7 +29,33 @@ if (!BOT_TOKEN) {
   console.error("❌ Missing BOT_TOKEN env var.");
   process.exit(1);
 }
-console.log(`▶ CSV_URL in use: ${CSV_URL}`);
+
+/* =============================================================
+   OFFICES — add new offices here, that's it.
+   ============================================================= */
+const OFFICES = [
+  {
+    key: "wola",
+    name: "Wola",
+    emoji: "🏢",
+    csvUrl:
+      process.env.WOLA_CSV_URL && process.env.WOLA_CSV_URL.startsWith("https://")
+        ? process.env.WOLA_CSV_URL
+        : "https://docs.google.com/spreadsheets/d/e/2PACX-1vQZiV2qtlydfMCH2xyqBlomBxTjjGzu9eqVae65xRfr38q9cZ8h7WKsVxXg8gQuX1kz7M1S_YUSC53H/pub?gid=1396698544&single=true&output=csv"
+  },
+  {
+    key: "mokotow",
+    name: "Mokotów",
+    emoji: "🏬",
+    csvUrl:
+      process.env.MOKOTOW_CSV_URL && process.env.MOKOTOW_CSV_URL.startsWith("https://")
+        ? process.env.MOKOTOW_CSV_URL
+        : "https://docs.google.com/spreadsheets/d/e/2PACX-1vRUNFroZNbEKHlABHcQl0ITUACh-5_XHtWlqw5IwXfZiWCOPz1REqqkuXMohpr7-wS8N_yPRjHSTYg-/pub?gid=0&single=true&output=csv"
+  }
+];
+
+console.log("▶ Configured offices:");
+OFFICES.forEach(o => console.log(`   - ${o.name} (${o.key}): ${o.csvUrl}`));
 
 app.use(express.json());
 
@@ -57,13 +78,13 @@ const isHeaderRow = name => /имя|name|менеджер|manager|imię|imie/i.t
 /* =============================================================
    CSV fetch & parse
    ============================================================= */
-async function fetchManagers() {
-  const r = await fetch(CSV_URL);
-  if (!r.ok) throw new Error(`CSV fetch failed: HTTP ${r.status}`);
+async function fetchOffice(office) {
+  const r = await fetch(office.csvUrl);
+  if (!r.ok) throw new Error(`CSV fetch failed for ${office.name}: HTTP ${r.status}`);
   const csv = await r.text();
   const rows = csvParse(csv, { skip_empty_lines: false, relax_column_count: true });
 
-  let headerIdx = rows.findIndex(r => r.some(c => isHeaderRow(c || "")));
+  let headerIdx = rows.findIndex(rr => rr.some(c => isHeaderRow(c || "")));
   if (headerIdx < 0) headerIdx = 1;
 
   const managers = [];
@@ -93,10 +114,15 @@ async function fetchManagers() {
       deposits: intOnly(row[1]),
       sales: intOnly(row[2]),
       plan: intOnly(row[3]),
-      completion: (row[4] || "").trim()
+      completion: (row[4] || "").trim(),
+      office: office.name
     });
   }
-  return { managers, total };
+  return { office, managers, total };
+}
+
+async function fetchAllOffices() {
+  return Promise.all(OFFICES.map(fetchOffice));
 }
 
 function nowParts() {
@@ -110,12 +136,65 @@ function nowParts() {
 /* =============================================================
    Message builders
    ============================================================= */
-function buildFullReport({ managers, total }) {
+function formatManagersTable(managers) {
+  const maxName = Math.max(...managers.map(m => m.name.length), 4);
+  let block = `<pre>${padR("Имя", maxName)}  Прод План  %\n`;
+  managers.forEach(m => {
+    const tag = m.sales > m.plan ? " 🔥" : "";
+    block += `${padR(m.name, maxName)}  ${padL(m.sales, 4)} ${padL(m.plan, 4)}  ${padL(m.completion, 7)}${tag}\n`;
+  });
+  block += `</pre>`;
+  return block;
+}
+
+function buildOfficeSection({ office, managers, total }) {
+  let s = `${office.emoji} <b>${escHtml(office.name)}</b>\n`;
+  s += formatManagersTable(managers) + "\n";
+  if (total) {
+    s += `💵 Депозиты: <b>${total.deposits}</b> · 🚗 Продажи: <b>${total.sales}</b> / ${total.plan} · 🎯 <b>${escHtml(total.completion)}</b>\n`;
+  }
+  return s;
+}
+
+function buildCombinedReport(allData) {
+  const { date, time } = nowParts();
+  let msg = `📊 <b>Отчёт по всем офисам</b>\n📅 ${date}  ⏰ ${time}\n━━━━━━━━━━━━━━━━━━\n\n`;
+
+  // Top-3 across all
+  const allManagers = allData.flatMap(d => d.managers);
+  const top3 = [...allManagers].sort((a, b) => b.sales - a.sales).slice(0, 3);
+  const medals = ["🥇", "🥈", "🥉"];
+  if (top3.length) {
+    msg += `🏆 <b>ТОП-3 (вся компания):</b>\n`;
+    top3.forEach((m, i) => {
+      msg += `${medals[i]} ${escHtml(m.name)} <i>(${escHtml(m.office)})</i> — <b>${m.sales}</b> продаж (${escHtml(m.completion)})\n`;
+    });
+    msg += "\n";
+  }
+
+  // Each office
+  allData.forEach(d => {
+    msg += buildOfficeSection(d) + "\n";
+  });
+
+  // Grand total
+  const totalDeposits = allData.reduce((s, d) => s + (d.total?.deposits || 0), 0);
+  const totalSales = allData.reduce((s, d) => s + (d.total?.sales || 0), 0);
+  const totalPlan = allData.reduce((s, d) => s + (d.total?.plan || 0), 0);
+  const grandPct = totalPlan > 0 ? ((totalSales / totalPlan) * 100).toFixed(2) + "%" : "—";
+  msg += `📈 <b>ВСЕГО ПО КОМПАНИИ:</b>\n`;
+  msg += `💵 Депозиты: <b>${totalDeposits}</b>\n`;
+  msg += `🚗 Продажи: <b>${totalSales}</b> / ${totalPlan}\n`;
+  msg += `🎯 Выполнение: <b>${grandPct.replace(".", ",")}</b>\n`;
+  return msg;
+}
+
+function buildSingleOfficeReport({ office, managers, total }) {
+  const { date, time } = nowParts();
   const top3 = [...managers].sort((a, b) => b.sales - a.sales).slice(0, 3);
   const medals = ["🥇", "🥈", "🥉"];
-  const { date, time } = nowParts();
 
-  let msg = `📊 <b>Отчёт по менеджерам</b>\n📅 ${date}  ⏰ ${time}\n━━━━━━━━━━━━━━━━━━\n\n`;
+  let msg = `${office.emoji} <b>${escHtml(office.name)}</b>\n📅 ${date}  ⏰ ${time}\n━━━━━━━━━━━━━━━━━━\n\n`;
   if (top3.length) {
     msg += `🏆 <b>ТОП-3:</b>\n`;
     top3.forEach((m, i) => {
@@ -123,46 +202,51 @@ function buildFullReport({ managers, total }) {
     });
     msg += "\n";
   }
-  const maxName = Math.max(...managers.map(m => m.name.length), 4);
-  msg += `👥 <b>Все менеджеры:</b>\n<pre>`;
-  msg += `${padR("Имя", maxName)}  Прод План  %\n`;
-  managers.forEach(m => {
-    const tag = m.sales > m.plan ? " 🔥" : "";
-    msg += `${padR(m.name, maxName)}  ${padL(m.sales, 4)} ${padL(m.plan, 4)}  ${padL(m.completion, 7)}${tag}\n`;
-  });
-  msg += `</pre>\n`;
+  msg += `👥 <b>Все менеджеры:</b>\n` + formatManagersTable(managers) + "\n";
   if (total) {
-    msg += `\n📈 <b>ИТОГО:</b>\n💵 Депозиты: <b>${total.deposits}</b>\n🚗 Продажи: <b>${total.sales}</b> / ${total.plan}\n🎯 Выполнение: <b>${escHtml(total.completion)}</b>\n`;
+    msg += `\n📈 <b>ИТОГО ${escHtml(office.name).toUpperCase()}:</b>\n`;
+    msg += `💵 Депозиты: <b>${total.deposits}</b>\n`;
+    msg += `🚗 Продажи: <b>${total.sales}</b> / ${total.plan}\n`;
+    msg += `🎯 Выполнение: <b>${escHtml(total.completion)}</b>\n`;
   }
   return msg;
 }
 
-function buildTopReport({ managers }) {
-  const top3 = [...managers].sort((a, b) => b.sales - a.sales).slice(0, 3);
+function buildCombinedTop(allData) {
+  const all = allData.flatMap(d => d.managers);
+  const top = [...all].sort((a, b) => b.sales - a.sales).slice(0, 3);
   const medals = ["🥇", "🥈", "🥉"];
   const { date, time } = nowParts();
-  let msg = `🏆 <b>Топ-3 менеджеров</b>\n📅 ${date}  ⏰ ${time}\n\n`;
-  top3.forEach((m, i) => {
-    msg += `${medals[i]} <b>${escHtml(m.name)}</b>\n`;
+  let msg = `🏆 <b>ТОП-3 по компании</b>\n📅 ${date}  ⏰ ${time}\n\n`;
+  top.forEach((m, i) => {
+    msg += `${medals[i]} <b>${escHtml(m.name)}</b> <i>(${escHtml(m.office)})</i>\n`;
     msg += `   🚗 ${m.sales} продаж · 💵 ${m.deposits} депозитов · 🎯 ${escHtml(m.completion)}\n\n`;
   });
   return msg;
 }
 
-function buildIndividualReport({ managers }, query) {
+function buildSearchAcrossOffices(allData, query) {
   const q = query.toLowerCase();
-  const found = managers.find(m => m.name.toLowerCase() === q)
-             || managers.find(m => m.name.toLowerCase().includes(q));
-  if (!found) {
-    const list = managers.map(m => "• " + m.name).join("\n");
-    return `❓ Не нашёл менеджера «${escHtml(query)}». Попробуй точнее или одно из:\n\n${escHtml(list)}`;
+  const all = allData.flatMap(d => d.managers);
+  const exact = all.filter(m => m.name.toLowerCase() === q);
+  const partial = all.filter(m => m.name.toLowerCase().includes(q));
+  const matches = exact.length ? exact : partial;
+
+  if (!matches.length) {
+    const list = all.map(m => `• ${m.name} (${m.office})`).join("\n");
+    return `❓ Не нашёл «${escHtml(query)}». Все менеджеры:\n\n${escHtml(list)}`;
   }
+
   const { date, time } = nowParts();
-  let msg = `👤 <b>${escHtml(found.name)}</b>\n📅 ${date}  ⏰ ${time}\n\n`;
-  msg += `💵 Депозиты: <b>${found.deposits}</b>\n`;
-  msg += `🚗 Продажи: <b>${found.sales}</b> / ${found.plan}\n`;
-  msg += `🎯 Выполнение: <b>${escHtml(found.completion)}</b>\n`;
-  if (found.sales > found.plan) msg += `\n🔥 План перевыполнен!`;
+  let msg = `🔎 <b>Найдено: ${matches.length}</b>\n📅 ${date}  ⏰ ${time}\n\n`;
+  matches.forEach(m => {
+    msg += `👤 <b>${escHtml(m.name)}</b> <i>(${escHtml(m.office)})</i>\n`;
+    msg += `   💵 Депозиты: <b>${m.deposits}</b>\n`;
+    msg += `   🚗 Продажи: <b>${m.sales}</b> / ${m.plan}\n`;
+    msg += `   🎯 Выполнение: <b>${escHtml(m.completion)}</b>`;
+    if (m.sales > m.plan) msg += ` 🔥`;
+    msg += `\n\n`;
+  });
   return msg;
 }
 
@@ -182,16 +266,18 @@ async function tgSend(chatId, text) {
 
 const HELP_TEXT =
   `📚 <b>Команды:</b>\n` +
-  `/report — полный отчёт по всем\n` +
-  `/top — топ-3 менеджеров\n` +
-  `/me &lt;имя&gt; — отчёт по конкретному менеджеру\n` +
+  `/report — отчёт по всем офисам\n` +
+  `/wola — только офис Wola\n` +
+  `/mokotow — только офис Mokotów\n` +
+  `/top — топ-3 по компании\n` +
+  `/me &lt;имя&gt; — поиск по имени (по обоим офисам)\n` +
   `/help — эта подсказка`;
 
 /* =============================================================
    Routes
    ============================================================= */
 app.post("/telegram-webhook", async (req, res) => {
-  res.sendStatus(200); // ack right away
+  res.sendStatus(200);
   try {
     const update = req.body || {};
     const message = update.message || update.edited_message || update.channel_post;
@@ -215,24 +301,36 @@ app.post("/telegram-webhook", async (req, res) => {
     } else if (cmd === "/help") {
       await tgSend(chatId, HELP_TEXT);
     } else if (cmd === "/report") {
-      const data = await fetchManagers();
-      await tgSend(chatId, buildFullReport(data));
+      const all = await fetchAllOffices();
+      await tgSend(chatId, buildCombinedReport(all));
+    } else if (cmd === "/wola" || cmd === "/office1") {
+      const office = OFFICES.find(o => o.key === "wola");
+      const data = await fetchOffice(office);
+      await tgSend(chatId, buildSingleOfficeReport(data));
+    } else if (cmd === "/mokotow" || cmd === "/mokotów" || cmd === "/office2") {
+      const office = OFFICES.find(o => o.key === "mokotow");
+      const data = await fetchOffice(office);
+      await tgSend(chatId, buildSingleOfficeReport(data));
     } else if (cmd === "/top") {
-      const data = await fetchManagers();
-      await tgSend(chatId, buildTopReport(data));
+      const all = await fetchAllOffices();
+      await tgSend(chatId, buildCombinedTop(all));
     } else if (cmd === "/me") {
       const arg = text.replace(/^\/me\s*/i, "").trim();
       if (!arg) {
         await tgSend(chatId, "Использование: <code>/me Имя</code>\nНапример: <code>/me Daniel</code>");
       } else {
-        const data = await fetchManagers();
-        await tgSend(chatId, buildIndividualReport(data, arg));
+        const all = await fetchAllOffices();
+        await tgSend(chatId, buildSearchAcrossOffices(all, arg));
       }
     } else {
       await tgSend(chatId, `🤔 Не понимаю команду <code>${escHtml(cmd)}</code>.\n\n` + HELP_TEXT);
     }
   } catch (err) {
     console.error("[TG webhook] error:", err);
+    try {
+      const chatId = String(req.body?.message?.chat?.id || "");
+      if (chatId) await tgSend(chatId, `❌ Ошибка: ${escHtml(err.message)}`);
+    } catch {}
   }
 });
 
@@ -255,7 +353,7 @@ app.get("/setup-webhook", async (req, res) => {
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    csv: CSV_URL ? "configured" : "missing",
+    offices: OFFICES.map(o => ({ key: o.key, name: o.name })),
     bot: BOT_TOKEN ? "configured" : "missing",
     allowedChats: ALLOWED_CHATS,
     timezone: TIMEZONE
@@ -268,5 +366,5 @@ app.get("/", (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`✅ Wincars Telegram bot listening on :${PORT}`);
-  console.log(`   CSV: ${CSV_URL ? "ON" : "OFF"} · Allowed chats: ${ALLOWED_CHATS.join(",") || "none"} · TZ: ${TIMEZONE}`);
+  console.log(`   Offices: ${OFFICES.map(o => o.name).join(", ")} · Allowed: ${ALLOWED_CHATS.join(",") || "none"} · TZ: ${TIMEZONE}`);
 });
