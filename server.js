@@ -138,10 +138,10 @@ function nowParts() {
    ============================================================= */
 function formatManagersTable(managers) {
   const maxName = Math.max(...managers.map(m => m.name.length), 4);
-  let block = `<pre>${padR("Имя", maxName)}  Прод План  %\n`;
+  let block = `<pre>${padR("Имя", maxName)}  Деп Прод План    %\n`;
   managers.forEach(m => {
     const tag = m.sales > m.plan ? " 🔥" : "";
-    block += `${padR(m.name, maxName)}  ${padL(m.sales, 4)} ${padL(m.plan, 4)}  ${padL(m.completion, 7)}${tag}\n`;
+    block += `${padR(m.name, maxName)}  ${padL(m.deposits, 3)} ${padL(m.sales, 4)} ${padL(m.plan, 4)}  ${padL(m.completion, 7)}${tag}\n`;
   });
   block += `</pre>`;
   return block;
