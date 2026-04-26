@@ -1,0 +1,36 @@
+name: Daily Sales Report
+
+# Runs twice a day in Europe/Warsaw timezone (currently CEST = UTC+2)
+# 10:00 Warsaw → 08:00 UTC
+# 21:00 Warsaw → 19:00 UTC
+# (in winter time CET = UTC+1, the actual delivery shifts by 1 hour;
+# adjust cron times here if you want to keep it exact)
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 10:00 Warsaw (summer)
+    - cron: '0 19 * * *'  # 21:00 Warsaw (summer)
+  workflow_dispatch:       # also allows manual run via GitHub UI
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Send report
+        env:
+          CSV_URL: ${{ secrets.CSV_URL }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          TIMEZONE: 'Europe/Warsaw'
+        run: node send_report.js
