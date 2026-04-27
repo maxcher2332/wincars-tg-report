@@ -130,11 +130,19 @@ function buildReport(allData) {
     msg += "\n";
   }
 
+  const avg = (n, c) => !c ? "0" : (n / c).toFixed(1).replace(".", ",");
+
   allData.forEach(({ office, managers, total }) => {
     msg += `${office.emoji} <b>${escHtml(office.name)}</b>\n`;
     msg += formatTable(managers) + "\n";
     if (total) {
+      const pcts = managers.map(m => parseFloat(String(m.completion).replace(",", ".").replace("%", "")) || 0);
+      const meanPct = pcts.length ? (pcts.reduce((s, p) => s + p, 0) / pcts.length).toFixed(2).replace(".", ",") + "%" : "—";
+      const conv = total.deposits > 0 ? (total.sales / total.deposits).toFixed(2).replace(".", ",") : "—";
       msg += `💵 Депозиты: <b>${total.deposits}</b> · 🚗 Продажи: <b>${total.sales}</b> / ${total.plan} · 🎯 <b>${escHtml(total.completion)}</b>\n`;
+      msg += `📊 Среднее на менеджера: <b>${avg(total.sales, managers.length)}</b> прод · <b>${avg(total.deposits, managers.length)}</b> деп · 👥 ${managers.length} мен.\n`;
+      msg += `📈 Средний % по менеджерам: <b>${meanPct}</b>\n`;
+      msg += `🔄 Конверсия: <b>${conv}</b> продаж на депозит\n`;
     }
     msg += "\n";
   });
@@ -143,11 +151,27 @@ function buildReport(allData) {
   const totalDeposits = allData.reduce((s, d) => s + (d.total?.deposits || 0), 0);
   const totalSales = allData.reduce((s, d) => s + (d.total?.sales || 0), 0);
   const totalPlan = allData.reduce((s, d) => s + (d.total?.plan || 0), 0);
+  const totalManagers = allData.reduce((s, d) => s + d.managers.length, 0);
+  const numOffices = allData.length;
   const grandPct = totalPlan > 0 ? ((totalSales / totalPlan) * 100).toFixed(2) + "%" : "—";
+
+  // Mean of individual managers' completion percentages (unweighted)
+  const allManagersFlat = allData.flatMap(d => d.managers);
+  const completionPercents = allManagersFlat.map(m => parseFloat(String(m.completion).replace(",", ".").replace("%", "")) || 0);
+  const meanCompletion = completionPercents.length
+    ? (completionPercents.reduce((s, p) => s + p, 0) / completionPercents.length).toFixed(2).replace(".", ",") + "%"
+    : "—";
+
+  const grandConv = totalDeposits > 0 ? (totalSales / totalDeposits).toFixed(2).replace(".", ",") : "—";
+
   msg += `📈 <b>ВСЕГО ПО КОМПАНИИ:</b>\n`;
   msg += `💵 Депозиты: <b>${totalDeposits}</b>\n`;
   msg += `🚗 Продажи: <b>${totalSales}</b> / ${totalPlan}\n`;
   msg += `🎯 Выполнение: <b>${grandPct.replace(".", ",")}</b>\n`;
+  msg += `📊 Среднее на менеджера: <b>${avg(totalSales, totalManagers)}</b> прод · <b>${avg(totalDeposits, totalManagers)}</b> деп · 👥 ${totalManagers} мен.\n`;
+  msg += `🏢 Среднее на офис: <b>${avg(totalSales, numOffices)}</b> прод · <b>${avg(totalDeposits, numOffices)}</b> деп · ${numOffices} офисов\n`;
+  msg += `📈 Средний % по менеджерам: <b>${meanCompletion}</b>\n`;
+  msg += `🔄 Конверсия: <b>${grandConv}</b> продаж на депозит\n`;
 
   return msg;
 }
