@@ -162,6 +162,55 @@ function formatDailyPlanLines(totalPlan, totalSales) {
   return s;
 }
 
+/* Monthly plan calendar — day-by-day breakdown with ✅ / 📌 / ⏳ markers */
+const MONTH_NAMES_RU = [
+  "января","февраля","марта","апреля","мая","июня",
+  "июля","августа","сентября","октября","ноября","декабря"
+];
+
+function buildMonthlyPlanCalendar(allData) {
+  const { year, month, day: today } = todayInTz();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const officesWithPlans = allData.filter(d => d.total?.plan);
+  if (!officesWithPlans.length) return "";
+
+  // Column widths per office
+  const officeCols = officesWithPlans.map(({ office }) => ({
+    label: office.name.length > 6 ? office.name.slice(0, 6) : office.name,
+    fullName: office.name
+  }));
+
+  // Build header
+  let s = `\n📆 <b>План по дням ${MONTH_NAMES_RU[month - 1]}:</b>\n<pre>`;
+  s += `Дата   `;
+  officeCols.forEach(c => { s += padL(c.label, 7); });
+  s += padL("Σ", 6) + "  Статус\n";
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const fraction = d / daysInMonth;
+    const dateStr = `${String(d).padStart(2, "0")}.${String(month).padStart(2, "0")}`;
+    let totalForDay = 0;
+    let allMet = true;
+    let line = `${dateStr} `;
+    officesWithPlans.forEach(({ office, total }) => {
+      const target = Math.round(total.plan * fraction);
+      totalForDay += target;
+      if (d <= today && total.sales < target) allMet = false;
+      line += padL(String(target), 7);
+    });
+    line += padL(String(totalForDay), 6) + "  ";
+
+    let icon;
+    if (d < today)       icon = allMet ? "✅" : "⛔";
+    else if (d === today) icon = "📌 сегодня";
+    else                  icon = "⏳";
+    line += icon + "\n";
+    s += line;
+  }
+  s += `</pre>`;
+  return s;
+}
+
 /* ===== Message builders ===== */
 function meanPercent(managers) {
   const pcts = managers.map(m => parseFloat(String(m.completion).replace(",", ".").replace("%", "")) || 0);
@@ -227,6 +276,7 @@ function buildCombinedReport(allData) {
   msg += `🏢 Среднее на офис: <b>${avg(totalSales, numOffices)}</b> прод · <b>${avg(totalDeposits, numOffices)}</b> деп · ${numOffices} офисов\n`;
   msg += `📈 Средний % по менеджерам: <b>${meanCompletion}</b>\n`;
   msg += formatDailyPlanLines(totalPlan, totalSales);
+  msg += buildMonthlyPlanCalendar(allData);
   return msg;
 }
 
@@ -252,6 +302,7 @@ function buildSingleOfficeReport({ office, managers, total }) {
     msg += `📊 Среднее на менеджера: <b>${avg(total.sales, managers.length)}</b> прод · <b>${avg(total.deposits, managers.length)}</b> деп · 👥 ${managers.length} мен.\n`;
     msg += `📈 Средний % по менеджерам: <b>${meanPercent(managers)}</b>\n`;
     msg += formatDailyPlanLines(total.plan, total.sales);
+    msg += buildMonthlyPlanCalendar([{ office, managers, total }]);
   }
   return msg;
 }
