@@ -137,6 +137,8 @@ function buildMonthlyPlanCalendar(allData) {
   const officesWithPlans = allData.filter(d => d.total?.plan);
   if (!officesWithPlans.length) return "";
 
+  const totalCurrentSales = officesWithPlans.reduce((s, d) => s + (d.total.sales || 0), 0);
+
   const officeCols = officesWithPlans.map(({ office }) => ({
     label: office.name.length > 6 ? office.name.slice(0, 6) : office.name
   }));
@@ -150,20 +152,22 @@ function buildMonthlyPlanCalendar(allData) {
     const fraction = d / daysInMonth;
     const dateStr = `${String(d).padStart(2, "0")}.${String(month).padStart(2, "0")}`;
     let totalForDay = 0;
-    let allMet = true;
     let line = `${dateStr} `;
     officesWithPlans.forEach(({ office, total }) => {
       const target = Math.round(total.plan * fraction);
       totalForDay += target;
-      if (d <= today && total.sales < target) allMet = false;
       line += padL(String(target), 7);
     });
     line += padL(String(totalForDay), 6) + "  ";
 
     let icon;
-    if (d < today)        icon = allMet ? "✅" : "⛔";
-    else if (d === today) icon = "📌 сегодня";
-    else                  icon = "⏳";
+    if (d < today) {
+      icon = totalCurrentSales >= totalForDay ? "✅" : "⛔";
+    } else if (d === today) {
+      icon = totalCurrentSales >= totalForDay ? "📌 сегодня ✅" : "📌 сегодня";
+    } else {
+      icon = "⏳";
+    }
     line += icon + "\n";
     s += line;
   }
