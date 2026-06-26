@@ -39,6 +39,15 @@ const OFFICES = [
       process.env.MOKOTOW_CSV_URL && process.env.MOKOTOW_CSV_URL.startsWith("https://")
         ? process.env.MOKOTOW_CSV_URL
         : "https://docs.google.com/spreadsheets/d/e/2PACX-1vRUNFroZNbEKHlABHcQl0ITUACh-5_XHtWlqw5IwXfZiWCOPz1REqqkuXMohpr7-wS8N_yPRjHSTYg-/pub?gid=0&single=true&output=csv"
+  },
+  {
+    key: "mokotow2",
+    name: "Mokotów 2.0",
+    emoji: "🏪",
+    csvUrl:
+      process.env.MOKOTOW2_CSV_URL && process.env.MOKOTOW2_CSV_URL.startsWith("https://")
+        ? process.env.MOKOTOW2_CSV_URL
+        : "https://docs.google.com/spreadsheets/d/1rGpO9MS49dmx8071wfhC5Nel9n9YLjVuGU05khQ7ulc/gviz/tq?tqx=out:csv&gid=0"
   }
 ];
 
@@ -359,7 +368,8 @@ const HELP_TEXT =
   `📚 <b>Команды:</b>\n` +
   `/report — отчёт по всем офисам\n` +
   `/wola — только офис Wola\n` +
-  `/mokotow — только офис Mokotów\n` +
+  `/mokotow — только Mokotów\n` +
+  `/mokotow2 — только Mokotów 2.0\n` +
   `/top — топ-3 по компании\n` +
   `/me &lt;имя&gt; — поиск по имени\n` +
   `/help — эта подсказка`;
@@ -398,6 +408,10 @@ app.post("/telegram-webhook", async (req, res) => {
       await tgSend(chatId, buildSingleOfficeReport(data));
     } else if (cmd === "/mokotow" || cmd === "/mokotów" || cmd === "/office2") {
       const office = OFFICES.find(o => o.key === "mokotow");
+      const data = await fetchOffice(office);
+      await tgSend(chatId, buildSingleOfficeReport(data));
+    } else if (cmd === "/mokotow2" || cmd === "/mok2" || cmd === "/office3") {
+      const office = OFFICES.find(o => o.key === "mokotow2");
       const data = await fetchOffice(office);
       await tgSend(chatId, buildSingleOfficeReport(data));
     } else if (cmd === "/top") {
