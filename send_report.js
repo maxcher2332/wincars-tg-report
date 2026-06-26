@@ -34,6 +34,15 @@ const OFFICES = [
       process.env.MOKOTOW_CSV_URL && process.env.MOKOTOW_CSV_URL.startsWith("https://")
         ? process.env.MOKOTOW_CSV_URL
         : "https://docs.google.com/spreadsheets/d/e/2PACX-1vRUNFroZNbEKHlABHcQl0ITUACh-5_XHtWlqw5IwXfZiWCOPz1REqqkuXMohpr7-wS8N_yPRjHSTYg-/pub?gid=0&single=true&output=csv"
+  },
+  {
+    key: "mokotow2",
+    name: "Mokotów 2.0",
+    emoji: "🏪",
+    csvUrl:
+      process.env.MOKOTOW2_CSV_URL && process.env.MOKOTOW2_CSV_URL.startsWith("https://")
+        ? process.env.MOKOTOW2_CSV_URL
+        : "https://docs.google.com/spreadsheets/d/1rGpO9MS49dmx8071wfhC5Nel9n9YLjVuGU05khQ7ulc/gviz/tq?tqx=out:csv&gid=0"
   }
 ];
 
