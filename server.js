@@ -121,7 +121,18 @@ async function fetchOffice(office) {
 }
 
 async function fetchAllOffices() {
-  return Promise.all(OFFICES.map(fetchOffice));
+  // Используем allSettled чтобы падение одного офиса не роняло весь отчёт
+  const results = await Promise.allSettled(OFFICES.map(fetchOffice));
+  return results.map((r, i) => {
+    if (r.status === "fulfilled") return r.value;
+    console.error(`[fetchAllOffices] ${OFFICES[i].name} failed:`, r.reason?.message);
+    return {
+      office: OFFICES[i],
+      managers: [],
+      total: null,
+      error: r.reason?.message || "Unknown error"
+    };
+  });
 }
 
 function nowParts() {
@@ -237,9 +248,21 @@ function meanPercent(managers) {
 }
 
 function formatManagersTable(managers) {
-  const maxName = Math.max(...managers.map(m => m.name.length), 4);
+  // Санитайзер для содержимого <pre> — убираем HTML-опасные символы и невидимые unicode
+  const cleanCell = s => String(s ?? "")
+    .replace(/[<>&]/g, "")             // символы, ломающие HTML-разметку Telegram
+    .replace(/[​-‍﻿]/g, "") // zero-width и BOM
+    .trim();
+
+  const cleaned = managers.map(m => ({
+    ...m,
+    name: cleanCell(m.name),
+    completion: cleanCell(m.completion)
+  }));
+
+  const maxName = Math.max(...cleaned.map(m => m.name.length), 4);
   let block = `<pre>${padR("Имя", maxName)}  Деп Прод План    %\n`;
-  managers.forEach(m => {
+  cleaned.forEach(m => {
     const tag = m.sales > m.plan && m.plan > 0 ? " 🔥" : "";
     block += `${padR(m.name, maxName)}  ${padL(m.deposits, 3)} ${padL(m.sales, 4)} ${padL(m.plan, 4)}  ${padL(m.completion, 7)}${tag}\n`;
   });
@@ -263,6 +286,18 @@ function buildCombinedReport(allData) {
   const { date, time } = nowParts();
   let msg = `📊 <b>Отчёт по всем офисам</b>\n📅 ${date}  ⏰ ${time}\n━━━━━━━━━━━━━━━━━━\n\n`;
 
+  // Показываем предупреждение про отвалившиеся офисы
+  const failed = allData.filter(d => d.error);
+  if (failed.length) {
+    msg += `⚠️ <b>Не удалось получить данные:</b>\n`;
+    failed.forEach(d => {
+      msg += `• ${escHtml(d.office.name)} — ${escHtml(d.error)}\n`;
+    });
+    msg += `\n`;
+  }
+
+  // Работаем только с успешно загруженными офисами
+  allData = allData.filter(d => !d.error);
   const allManagers = allData.flatMap(d => d.managers);
   const top3 = [...allManagers].sort((a, b) => b.sales - a.sales).slice(0, 3);
   const medals = ["🥇", "🥈", "🥉"];
@@ -439,6 +474,12 @@ app.post("/telegram-webhook", async (req, res) => {
     }
   } catch (err) {
     console.error("[TG webhook] error:", err);
+    try {
+      const chatId = String(req.body?.message?.chat?.id || "");
+      if (chatId) {
+        await tgSend(chatId, `❌ Ошибка сервера: <code>${escHtml(err.message)}</code>\n\nПопробуйте через минуту или напишите админу.`);
+      }
+    } catch { /* ignore */ }
   }
 });
 
