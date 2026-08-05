@@ -197,15 +197,22 @@ const MONTH_NAMES_RU = [
 function buildMonthlyPlanCalendar(allData) {
   const { year, month, day: today } = todayInTz();
   const daysInMonth = new Date(year, month, 0).getDate();
-  const officesWithPlans = allData.filter(d => d.total?.plan);
+
+  // Для каждого офиса считаем эффективный план и продажи
+  // (сначала из строки "Общий выполнение", если пусто — из суммы менеджеров)
+  const officesEnriched = allData.map(d => {
+    const plan  = d.total?.plan  || (d.managers?.reduce((s, m) => s + (m.plan  || 0), 0)) || 0;
+    const sales = d.total?.sales || (d.managers?.reduce((s, m) => s + (m.sales || 0), 0)) || 0;
+    return { office: d.office, plan, sales };
+  });
+  const officesWithPlans = officesEnriched.filter(d => d.plan > 0);
   if (!officesWithPlans.length) return "";
 
-  // Текущие совокупные продажи по всей компании
-  const totalCurrentSales = officesWithPlans.reduce((s, d) => s + (d.total.sales || 0), 0);
+  const totalCurrentSales = officesWithPlans.reduce((s, d) => s + d.sales, 0);
 
-  const officeCols = officesWithPlans.map(({ office }) => ({
-    label: office.name.length > 6 ? office.name.slice(0, 6) : office.name,
-    fullName: office.name
+  const officeCols = officesWithPlans.map(d => ({
+    label: d.office.name.length > 6 ? d.office.name.slice(0, 6) : d.office.name,
+    fullName: d.office.name
   }));
 
   let s = `\n📆 <b>План по дням ${MONTH_NAMES_RU[month - 1]}:</b>\n<pre>`;
@@ -218,14 +225,13 @@ function buildMonthlyPlanCalendar(allData) {
     const dateStr = `${String(d).padStart(2, "0")}.${String(month).padStart(2, "0")}`;
     let totalForDay = 0;
     let line = `${dateStr} `;
-    officesWithPlans.forEach(({ office, total }) => {
-      const target = Math.round(total.plan * fraction);
+    officesWithPlans.forEach(({ plan }) => {
+      const target = Math.round(plan * fraction);
       totalForDay += target;
       line += padL(String(target), 7);
     });
     line += padL(String(totalForDay), 6) + "  ";
 
-    // ✅ если общая сумма продаж по компании уже покрывает план этого дня
     let icon;
     if (d < today) {
       icon = totalCurrentSales >= totalForDay ? "✅" : "⛔";
@@ -282,7 +288,8 @@ function buildOfficeSection({ office, managers, total }) {
   return s;
 }
 
-function buildCombinedReport(allData) {
+function buildCombinedReport(allData, opts = {}) {
+  const includeCalendar = opts.includeCalendar !== false;
   const { date, time } = nowParts();
   let msg = `📊 <b>Отчёт по всем офисам</b>\n📅 ${date}  ⏰ ${time}\n━━━━━━━━━━━━━━━━━━\n\n`;
 
@@ -330,7 +337,7 @@ function buildCombinedReport(allData) {
   msg += `🏢 Среднее на офис: <b>${avg(totalSales, numOffices)}</b> прод · <b>${avg(totalDeposits, numOffices)}</b> деп · ${numOffices} офисов\n`;
   msg += `📈 Средний % по менеджерам: <b>${meanCompletion}</b>\n`;
   msg += formatDailyPlanLines(totalPlan, totalSales);
-  msg += buildMonthlyPlanCalendar(allData);
+  if (includeCalendar) msg += buildMonthlyPlanCalendar(allData);
   return msg;
 }
 
@@ -405,7 +412,20 @@ async function tgSend(chatId, text) {
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true })
   });
   const j = await r.json();
-  if (!j.ok) console.error("[TG sendMessage]", j);
+  if (!j.ok) {
+    console.error("[TG sendMessage failed]", j, "TEXT LENGTH:", text.length);
+    // Пробуем отправить хотя бы уведомление об ошибке, чтобы не молчать
+    try {
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `❌ Не удалось отправить ответ: ${j.description || "unknown error"}\nДлина сообщения: ${text.length} символов (лимит 4096).`
+        })
+      });
+    } catch { /* ignore */ }
+  }
   return j;
 }
 
@@ -446,7 +466,11 @@ app.post("/telegram-webhook", async (req, res) => {
       await tgSend(chatId, HELP_TEXT);
     } else if (cmd === "/report") {
       const all = await fetchAllOffices();
-      await tgSend(chatId, buildCombinedReport(all));
+      // Отправляем 2 отдельных сообщения — иначе может превысить лимит Telegram в 4096 символов
+      const mainMsg = buildCombinedReport(all, { includeCalendar: false });
+      await tgSend(chatId, mainMsg);
+      const calendarMsg = buildMonthlyPlanCalendar(all.filter(d => !d.error));
+      if (calendarMsg) await tgSend(chatId, calendarMsg);
     } else if (cmd === "/wola" || cmd === "/office1") {
       const office = OFFICES.find(o => o.key === "wola");
       const data = await fetchOffice(office);
