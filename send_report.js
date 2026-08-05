@@ -62,7 +62,12 @@ const isTotalRow = name => /общий|итог|total|razem/i.test(name || "");
 const isHeaderRow = name => /имя|name|менеджер|manager|imię|imie/i.test(name || "");
 
 async function fetchOffice(office) {
-  const r = await fetch(office.csvUrl);
+  const sep = office.csvUrl.includes("?") ? "&" : "?";
+  const freshUrl = `${office.csvUrl}${sep}_t=${Date.now()}`;
+  const r = await fetch(freshUrl, {
+    cache: "no-store",
+    headers: { "Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache" }
+  });
   if (!r.ok) throw new Error(`CSV fetch failed for ${office.name}: HTTP ${r.status}`);
   const csv = await r.text();
   const rows = csvParse(csv, { skip_empty_lines: false, relax_column_count: true });
