@@ -186,9 +186,20 @@ function meanPercent(managers) {
 }
 
 function formatTable(managers) {
-  const maxName = Math.max(...managers.map(m => m.name.length), 4);
+  const cleanCell = s => String(s ?? "")
+    .replace(/[<>&]/g, "")
+    .replace(/[​-‍﻿]/g, "")
+    .trim();
+
+  const cleaned = managers.map(m => ({
+    ...m,
+    name: cleanCell(m.name),
+    completion: cleanCell(m.completion)
+  }));
+
+  const maxName = Math.max(...cleaned.map(m => m.name.length), 4);
   let block = `<pre>${padR("Имя", maxName)}  Деп Прод План    %\n`;
-  managers.forEach(m => {
+  cleaned.forEach(m => {
     const tag = m.sales > m.plan && m.plan > 0 ? " 🔥" : "";
     block += `${padR(m.name, maxName)}  ${padL(m.deposits, 3)} ${padL(m.sales, 4)} ${padL(m.plan, 4)}  ${padL(m.completion, 7)}${tag}\n`;
   });
